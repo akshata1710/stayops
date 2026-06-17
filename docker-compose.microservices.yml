@@ -1,0 +1,91 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: stayops
+      POSTGRES_PASSWORD: stayops
+      POSTGRES_DB: stayops
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stayops"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - stayops-net
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - stayops-net
+
+  user-service:
+    build:
+      context: .
+      dockerfile: services/user/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://stayops:stayops@db:5432/stayops
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-me}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - stayops-net
+
+  property-service:
+    build:
+      context: .
+      dockerfile: services/property/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://stayops:stayops@db:5432/stayops
+      REDIS_URL: redis://redis:6379
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-me}
+      USER_SERVICE_URL: http://user-service:8001
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - stayops-net
+
+  booking-service:
+    build:
+      context: .
+      dockerfile: services/booking/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://stayops:stayops@db:5432/stayops
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-me}
+      USER_SERVICE_URL: http://user-service:8001
+      PROPERTY_SERVICE_URL: http://property-service:8002
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - stayops-net
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.microservices.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - user-service
+      - property-service
+      - booking-service
+    networks:
+      - stayops-net
+
+volumes:
+  postgres_data:
+
+networks:
+  stayops-net:
+    driver: bridge
