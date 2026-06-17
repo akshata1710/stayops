@@ -1,4 +1,4 @@
-name: CI
+name: CI/CD
 
 on:
   push:
@@ -63,9 +63,36 @@ jobs:
         run: |
           pytest -v --cov=app --cov-report=term-missing
 
-      - name: Upload coverage report
-        if: always()
-        uses: actions/upload-artifact@v4
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      matrix:
+        service: [user, property, booking]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          name: coverage-report
-          path: .coverage
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.service }}-service
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/${{ matrix.service }}/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/stayops-${{ matrix.service }}:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/stayops-${{ matrix.service }}:latest
